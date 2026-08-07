@@ -11,8 +11,6 @@ comment ='storage interation, file formates,external stage';
 -- describe databse
 describe database global_mart_db;
 
-
--- create storage integrations
 -- --------------------------storage integation--------------------------------------------------
 create or replace storage integration s3_integration2
 type = External_Stage
@@ -35,25 +33,7 @@ storage_integration = s3_integration2;
 list @global_mart_db.storage_integrations.s3_stage;
 
 
-/*
-global_mart_db=>database
-
-storage_integeration==> storage integeration schema
-
-s3_stage==> external stage na,e
-
-raw schema==>raw table
-
-s3=>iot=>iot json file
-
-
-
-
-*/
-
 -- ----------------------create raw schema ------------------------------------------------
--- create row schema for all raw table's storage
--- create raw/bronge schema for raw tables storing
 create schema if not exists global_mart_db.raw; --raw for raw data given by company
 use schema global_mart_db.storage_integrations;
 
@@ -85,9 +65,8 @@ replace_invalid_characters = true;
 use schema global_mart_db.raw;
 
 
-
 -- ---------------------row table creation-----------------------------------------
---creating table for raw data to be stored json file
+-- creating table for raw data to be stored json file
 create or replace table global_mart_db.raw.iot_events_raw(
     event_id string,
     event_type string,
@@ -100,11 +79,6 @@ create or replace table global_mart_db.raw.iot_events_raw(
     load_at timestamp
 
 );
-
-select * from global_mart_db.raw.iot_events_raw;
-SELECT *
-FROM global_mart_db.information_schema.tables
-WHERE table_schema = 'RAW';
 
 
 -- create csv file
@@ -127,15 +101,10 @@ unit_price float,
 discount_pct int,
 total_amount float,
 payment_method varchar(50),
-loyalty_points int
+loyalty_points int,
+source_file STRING,
+load_ts TIMESTAMP_NTZ
 );
-ALTER TABLE global_mart_db.raw.pos_batch 
-ADD (
-    source_file STRING,
-    load_ts TIMESTAMP_NTZ
-);
-
-select * from global_mart_db.raw.pos_batch;
 
 
 create or replace table global_mart_db.raw.orders_prq(
@@ -160,26 +129,11 @@ create or replace table global_mart_db.raw.orders_prq(
     file_load_time timestamp,
     source_file varchar
 );
-list @global_mart_db.storage_integrations.s3_stage;
 
 
 -- ------------------pipe creation-------------------------------------------------
 
-
--- -- copying data from s3 to this raw file manually 
--- copy into global_mart_db.raw.iot_events_raw(row_col, source_file)
--- from (select $1, METADATA$FILENAME from @global_mart_db.storage_integrations.s3_stage)
--- file_format=(format_name='global_mart_db.storage_integrations.format_json');
-
--- copy data manualy from s3 to json file
--- copy into global_mart_db.raw.orders
--- from @global_mart_db.storage_integrations.s3_stage/parquet
--- file_format=(format_name = 'global_mart_db.storage_integrations.parquet_format');
-
--- select count(*) from global_mart_db.raw.pos_batch;
-
-
--- create a pipline for json file to automatic loading data
+-- create a pipline for csv file to automatic loading data
 create or replace pipe global_mart_db.storage_integrations.csv_pipe_raw
 auto_ingest = TRUE
 as
@@ -211,12 +165,6 @@ from(
     from @global_mart_db.storage_integrations.s3_stage/pos/ t
 )
 file_format=(format_name='global_mart_db.storage_integrations.my_csv_format');
-desc pipe global_mart_db.storage_integrations.csv_pipe_raw;
-select * from global_mart_db.raw.pos_batch;
-ALTER PIPE global_mart_db.storage_integrations.csv_pipe_raw REFRESH;
-select system$pipe_status('global_mart_db.storage_integrations.csv_pipe_raw');
-
-
 
 
 -- create json pipe for automatic data load from s3 to json table
@@ -237,11 +185,6 @@ from (
         current_timestamp()
     from @global_mart_db.storage_integrations.s3_stage/iot/)
 file_format=(format_name='global_mart_db.storage_integrations.format_json');
-select * from  global_mart_db.raw.iot_events_raw;
-DESC PIPE global_mart_db.storage_integrations.json_pipe_raw;
-alter global_mart_db.storage_integrations.json_pipe_raw refresh;
-
-
 
 
 create or replace pipe global_mart_db.storage_integrations.parquet_pipe_raw
@@ -272,24 +215,7 @@ from (
         METADATA$FILENAME
     from @global_mart_db.storage_integrations.s3_stage/parquet/)
 file_format=(format_name='global_mart_db.storage_integrations.parquet_format');
-
-desc pipe global_mart_db.storage_integrations.parquet_pipe_raw;
-select $1 from @global_mart_db.storage_integrations.s3_stage/parquet/;
-select * from global_mart_db.raw.orders_prq;
-select system$pipe_status('global_mart_db.storage_integrations.parquet_pipe_raw');
-alter pipe  global_mart_db.storage_integrations.parquet_pipe_raw refresh;
-
-
-
-ALTER PIPE global_mart_db.storage_integrations.json_pipe_raw SET PIPE_EXECUTION_PAUSED = FALSE;
-
-
-list @global_mart_db.storage_integrations.s3_stage/iot/;
-list @global_mart_db.storage_integrations.s3_stage/pos/;
-
-
-
--- -------------------------------- streams -------------------------------------------------
+-- -------------------------------- raw streams -------------------------------------------------
 create or replace stream global_mart_db.storage_integrations.iot_event_raw_filter_stram on table
 global_mart_db.raw.iot_events_raw
 append_only= TRUE ;
@@ -300,8 +226,7 @@ global_mart_db.raw.pos_batch
 append_only= TRUE;
 
 
-create or replace stream 
-global_mart_db.storage_integrations.orders_filter_stram on table
+create or replace stream global_mart_db.storage_integrations.orders_filter_stram on table
 global_mart_db.raw.orders_prq;
 
 
@@ -344,8 +269,6 @@ create or replace table global_mart_db.staging.stg_csv_transaction(
 );
 
 
-
-
  create or replace table global_mart_db.staging.stg_json_sensors (
     event_id string,
     event_type string,
@@ -362,7 +285,6 @@ create or replace table global_mart_db.staging.stg_csv_transaction(
     source_file string,
     load_at timestamp
 );
-
 
 
 create or replace table global_mart_db.staging.stg_orders_parquet(
@@ -390,10 +312,11 @@ create or replace table global_mart_db.staging.stg_orders_parquet(
 );
 
 
--- -------------------create merge tatment----------------------------------------
+-- ------------------- (merge)----------------------------------------
 
 CREATE OR REPLACE TASK orders_task
 WAREHOUSE = COMPUTE_WH
+SCHEDULE = '5 MINUTE'
 WHEN SYSTEM$STREAM_HAS_DATA('global_mart_db.storage_integrations.pos_batch_stream')
 as
 merge into global_mart_db.staging.stg_csv_transaction as t
@@ -518,17 +441,11 @@ VALUES (
     s.load_ts
 
 );
-ALTER TASK orders_task RESUME;
-select * from global_mart_db.staging.stg_csv_transaction;
-ALTER TASK orders_task suspend;
-SHOW TASKS LIKE 'ORDERS_TASK';
-
-
-
 
 
 CREATE OR REPLACE TASK json_sensor_task
 WAREHOUSE = COMPUTE_WH
+SCHEDULE = '5 MINUTE'
 WHEN SYSTEM$STREAM_HAS_DATA('global_mart_db.storage_integrations.iot_event_raw_filter_stram')
 as
 merge into global_mart_db.staging.stg_json_sensors as t 
@@ -564,18 +481,11 @@ VALUES (
     src.battery_pct, src.store_floor, src.sensor_name, src.sensor_value, src.sensor_unit, src.source_file,
     src.load_at
 );
-ALTER TASK json_sensor_task RESUME;
-select * from global_mart_db.staging.stg_json_sensors;
-ALTER TASK json_sensor_task suspend;
-SHOW TASKS LIKE 'json_sensor_task';
-
-
-select * from global_mart_db.staging.stg_csv_transaction;
 
 
 CREATE OR REPLACE TASK parquet_orders_task
 WAREHOUSE = COMPUTE_WH
-
+SCHEDULE = '5 MINUTE'
 WHEN SYSTEM$STREAM_HAS_DATA('global_mart_db.storage_integrations.orders_filter_stram')
 as
 merge into global_mart_db.staging.stg_orders_parquet as s
@@ -649,106 +559,288 @@ VALUES (
     b.source_file
 );
 
-ALTER TASK  parquet_orders_task RESUME;
-select * from global_mart_db.staging.stg_orders_parquet;
-ALTER TASK parquet_orders_task suspend;
-SHOW TASKS LIKE 'parquet_orders_task';
+
+-- ---------------------------------- silver_streams ----------------------------------
+create or replace stream global_mart_db.storage_integrations.stg_csv_transaction_stream
+on table global_mart_db.staging.stg_csv_transaction;
+
+create or replace stream global_mart_db.storage_integrations.stg_json_sensors_stream
+on table global_mart_db.staging.stg_json_sensors
+append_only = TRUE;
+
+create or replace stream global_mart_db.storage_integrations.stg_orders_parquet_stream
+on table global_mart_db.staging.stg_orders_parquet;
+
 
 -- --------------------------golden schema ----------------------------------------
 create or replace schema global_mart_db.golden_mart;
--- --------------------------golden tables-----------------------------------------
-create or replace table global_mart_db.golden_mart.daily_sales_fact(
-    report_date date,
-    store_id varchar(50),
-    store_city varchar(50),
-    store_name varchar(50),
-    category varchar(50),
-    total_revenue_generated number,
-    avg_cart_size number,
-    total_unique_customer number,
-    date_updated date
+
+-- --------------------------golden - star schema -----------------------------------------
+-- dimensions (store aur product dono facts me common hai isliye alag nikala)
+create or replace table global_mart_db.golden_mart.dim_store(
+    store_key   number,
+    store_id    varchar(50),
+    store_name  varchar(50),
+    store_city  varchar(50),
+    store_region varchar(50),
+    updated_at  timestamp_ntz,
+    primary key(store_key)
 );
 
-select * from global_mart_db.golden_mart.daily_sales_fact;
-create or replace table global_mart_db.golden_mart.gross_margin_fact(
-    store_name varchar(50),
-    category varchar(50),
-    total_revenue_generated number,
-    total_cost_generated number,
-    gross_profit number,
-    gross_margin_precentage number,
-    no_of_units_sold number,
-    total_unit_orders number,
-    date_updated date
-        
+create or replace table global_mart_db.golden_mart.dim_product(
+    product_key  number,
+    product_sku  varchar(50),
+    product_name varchar(50),
+    category     varchar(50),
+    subcategory  varchar(50),
+    updated_at   timestamp_ntz,
+    primary key(product_key)
 );
 
-create or replace table json_iot_pivot_table as 
-select 
- store_id ,  store_name ,
- avg( case when  sensor_name='footfall' then sensor_value  else 0 end) as average_football, 
- avg( case when  sensor_name='weight_kg' then sensor_value else 0 end) as average_weight,
- avg( case when  sensor_name='temp_c' then sensor_value else 0 end) as avg_temp 
- from global_mart_db.staging.stg_json_sensors group by store_id ,store_name;
+-- fact table 
+create or replace table global_mart_db.golden_mart.fact_sales(
+    transaction_id varchar(50),
+    store_key      number,
+    product_key    number,
+    cashier_id     varchar(50),
+    customer_id    varchar(50),
+    transaction_ts timestamp_ntz,
+    quantity       int,
+    unit_price     float,
+    discount_pct   int,
+    line_total     float,
+    payment_method varchar(10),
+    loyalty_points int,
+    source_file    string,
+    load_ts        timestamp_ntz,
+    primary key(transaction_id)
+);
 
-select * from json_iot_pivot_table ;
+create or replace table global_mart_db.golden_mart.fact_orders(
+    order_id           varchar(50),
+    store_key          number,
+    product_key        number,
+    supplier_id        varchar(50),
+    supplier_name      varchar(50),
+    supplier_city      varchar(50),
+    order_date         datetime,
+    warehouse_id       varchar(50),
+    unit_cost          float,
+    quantity_ordered   int,
+    quantity_received  int,
+    order_status       varchar(50),
+    expected_delivery  date,
+    actual_delivery    date,
+    lead_time_days     int,
+    is_late            varchar(50),
+    source_file        varchar,
+    load_ts            timestamp,
+    primary key(order_id)
+);
 
-select *  from global_mart_db.staging.stg_json_sensors;
+create or replace table global_mart_db.golden_mart.fact_iot_reading(
+    event_id     string,
+    sensor_name  string,
+    store_key    number,
+    event_ts     timestamp,
+    device_id    string,
+    firmware     string,
+    battery_pct  number,
+    store_floor  number,
+    sensor_value float,
+    sensor_unit  string,
+    source_file  string,
+    load_at      timestamp,
+    primary key(event_id, sensor_name)
+);
 
 
-create or replace table global_mart_db.golden_mart.fact_iot_sensor as 
- select c.*, j.average_football, j.average_weight, j.avg_temp from global_mart_db.staging.stg_csv_transaction as c join json_iot_pivot_table as j on c.store_id=j.store_id and c.store_name=j.store_name;
+CREATE OR REPLACE TASK task_load_dim_store
+WAREHOUSE = COMPUTE_WH
+AFTER orders_task
+WHEN SYSTEM$STREAM_HAS_DATA('global_mart_db.storage_integrations.stg_csv_transaction_stream')
+AS
+merge into global_mart_db.golden_mart.dim_store as t
+using (
+    select distinct
+        hash(store_id) as store_key, store_id, store_name, store_city, store_region
+    from global_mart_db.storage_integrations.stg_csv_transaction_stream
+) as s
+on t.store_key = s.store_key
+when matched then update set
+    t.store_name = s.store_name, t.store_city = s.store_city, t.store_region = s.store_region,
+    t.updated_at = current_timestamp()
+when not matched then insert(store_key, store_id, store_name, store_city, store_region, updated_at)
+values(s.store_key, s.store_id, s.store_name, s.store_city, s.store_region, current_timestamp());
 
 
-select * from global_mart_db.golden_mart.fact_iot_sensor;
+CREATE OR REPLACE TASK task_load_dim_product
+WAREHOUSE = COMPUTE_WH
+AFTER orders_task
+WHEN SYSTEM$STREAM_HAS_DATA('global_mart_db.storage_integrations.stg_csv_transaction_stream')
+AS
+merge into global_mart_db.golden_mart.dim_product as t
+using (
+    select distinct
+        hash(product_sku) as product_key, product_sku, product_name, category, subcategory
+    from global_mart_db.storage_integrations.stg_csv_transaction_stream
+) as s
+on t.product_key = s.product_key
+when matched then update set
+    t.product_name = s.product_name, t.category = s.category, t.subcategory = s.subcategory,
+    t.updated_at = current_timestamp()
+when not matched then insert(product_key, product_sku, product_name, category, subcategory, updated_at)
+values(s.product_key, s.product_sku, s.product_name, s.category, s.subcategory, current_timestamp());
 
 
+CREATE OR REPLACE TASK task_load_fact_sales
+WAREHOUSE = COMPUTE_WH
+AFTER task_load_dim_store, task_load_dim_product
+AS
+merge into global_mart_db.golden_mart.fact_sales as t
+using (
+    select
+        transaction_id, hash(store_id) as store_key, hash(product_sku) as product_key,
+        cashier_id, customer_id, transaction_ts, quantity, unit_price, discount_pct,
+        line_total, payment_method, loyalty_points, source_file, load_ts
+    from global_mart_db.staging.stg_csv_transaction
+) as s
+on t.transaction_id = s.transaction_id
+when matched then update set
+    t.store_key = s.store_key, t.product_key = s.product_key, t.cashier_id = s.cashier_id,
+    t.customer_id = s.customer_id, t.transaction_ts = s.transaction_ts, t.quantity = s.quantity,
+    t.unit_price = s.unit_price, t.discount_pct = s.discount_pct, t.line_total = s.line_total,
+    t.payment_method = s.payment_method, t.loyalty_points = s.loyalty_points,
+    t.source_file = s.source_file, t.load_ts = s.load_ts
+when not matched then insert(
+    transaction_id, store_key, product_key, cashier_id, customer_id, transaction_ts, quantity,
+    unit_price, discount_pct, line_total, payment_method, loyalty_points, source_file, load_ts
+) values (
+    s.transaction_id, s.store_key, s.product_key, s.cashier_id, s.customer_id, s.transaction_ts,
+    s.quantity, s.unit_price, s.discount_pct, s.line_total, s.payment_method, s.loyalty_points,
+    s.source_file, s.load_ts
+);
 
 
+CREATE OR REPLACE TASK task_load_fact_orders
+WAREHOUSE = COMPUTE_WH
+AFTER parquet_orders_task
+WHEN SYSTEM$STREAM_HAS_DATA('global_mart_db.storage_integrations.stg_orders_parquet_stream')
+AS
+merge into global_mart_db.golden_mart.fact_orders as t
+using (
+    select
+        order_id, hash(store_id) as store_key, hash(product_sku) as product_key,
+        supplier_id, supplier_name, supplier_city, order_date, warehouse_id, unit_cost,
+        quantity_ordered, quantity_received, order_status, expected_delivery, actual_delivery,
+        lead_time_days, is_late, source_file, file_load_time
+    from global_mart_db.storage_integrations.stg_orders_parquet_stream
+) as s
+on t.order_id = s.order_id
+when matched then update set
+    t.store_key = s.store_key, t.product_key = s.product_key, t.supplier_id = s.supplier_id,
+    t.supplier_name = s.supplier_name, t.supplier_city = s.supplier_city, t.order_date = s.order_date,
+    t.warehouse_id = s.warehouse_id, t.unit_cost = s.unit_cost, t.quantity_ordered = s.quantity_ordered,
+    t.quantity_received = s.quantity_received, t.order_status = s.order_status,
+    t.expected_delivery = s.expected_delivery, t.actual_delivery = s.actual_delivery,
+    t.lead_time_days = s.lead_time_days, t.is_late = s.is_late, t.source_file = s.source_file,
+    t.load_ts = s.file_load_time
+when not matched then insert(
+    order_id, store_key, product_key, supplier_id, supplier_name, supplier_city, order_date,
+    warehouse_id, unit_cost, quantity_ordered, quantity_received, order_status, expected_delivery,
+    actual_delivery, lead_time_days, is_late, source_file, load_ts
+) values (
+    s.order_id, s.store_key, s.product_key, s.supplier_id, s.supplier_name, s.supplier_city,
+    s.order_date, s.warehouse_id, s.unit_cost, s.quantity_ordered, s.quantity_received,
+    s.order_status, s.expected_delivery, s.actual_delivery, s.lead_time_days, s.is_late,
+    s.source_file, s.file_load_time
+);
 
--- ----------------------data_inserts--------------------------------
-insert into global_mart_db.golden_mart.daily_sales_fact
-    select 
-        date(transaction_ts) as report_date,
-        store_id,
-        store_city,
-        store_name,
-        category,
-        sum(line_total) as total_revenue_genrated,
-        sum(quantity)/count(distinct transaction_id )as avg_cart_size,
-        count(distinct customer_id) as total_unique_customer,
-        current_date() as date_updated
-        from global_mart_db.staging.stg_csv_transaction
-        group by date(transaction_ts), store_id,store_city,store_name,category ;
 
-select * from  global_mart_db.staging.stg_csv_transaction;
-select * from global_mart_db.staging.stg_json_sensors;
-select * from global_mart_db.staging.stg_orders_parquet;
+CREATE OR REPLACE TASK task_load_fact_iot
+WAREHOUSE = COMPUTE_WH
+AFTER json_sensor_task
+WHEN SYSTEM$STREAM_HAS_DATA('global_mart_db.storage_integrations.stg_json_sensors_stream')
+AS
+merge into global_mart_db.golden_mart.fact_iot_reading as t
+using (
+    select
+        event_id, sensor_name, hash(store_id) as store_key, event_ts, device_id, firmware,
+        battery_pct, store_floor, sensor_value, sensor_unit, source_file, load_at
+    from global_mart_db.storage_integrations.stg_json_sensors_stream
+) as s
+on t.event_id = s.event_id and t.sensor_name = s.sensor_name
+when not matched then insert(
+    event_id, sensor_name, store_key, event_ts, device_id, firmware, battery_pct, store_floor,
+    sensor_value, sensor_unit, source_file, load_at
+) values (
+    s.event_id, s.sensor_name, s.store_key, s.event_ts, s.device_id, s.firmware, s.battery_pct,
+    s.store_floor, s.sensor_value, s.sensor_unit, s.source_file, s.load_at
+);
 
 
+-- ---------------------------------- resume all task ----------------------------------
+alter task global_mart_db.golden_mart.task_load_fact_sales resume;
+alter task global_mart_db.golden_mart.task_load_fact_orders resume;
+alter task global_mart_db.golden_mart.task_load_fact_iot resume;
+alter task global_mart_db.golden_mart.task_load_dim_store resume;
+alter task global_mart_db.golden_mart.task_load_dim_product resume;
+alter task global_mart_db.storage_integrations.orders_task resume;
+alter task global_mart_db.storage_integrations.json_sensor_task resume;
+alter task global_mart_db.storage_integrations.parquet_orders_task resume;
 
-insert into global_mart_db.golden_mart.gross_margin_fact
-select 
-    c.store_name,
-    c.category,
-    sum(c.line_total) as total_revenue_generated,
-    sum(p.unit_cost*c.quantity) as total_cost_generated,
-    sum(c.line_total) - sum(p.unit_cost*c.quantity) as gross_profit,
-    DIV0NULL((sum(c.line_total) - sum(p.unit_cost*c.quantity)), sum(c.line_total))*100 as gross_margin_precentage,
-    sum(c.quantity) as no_of_unit_sold,
-    count(distinct c.transaction_id) as total_unit_orders,
+show tasks in database global_mart_db;
+
+-- businees ready data 
+
+create or replace view global_mart_db.golden_mart.daily_sales_fact as
+select
+    date(f.transaction_ts) as report_date,
+    st.store_id,
+    st.store_city,
+    st.store_name,
+    p.category,
+    sum(f.line_total) as total_revenue_generated,
+    sum(f.quantity)/count(distinct f.transaction_id) as avg_cart_size,
+    count(distinct f.customer_id) as total_unique_customer,
     current_date() as date_updated
-    from global_mart_db.staging.stg_csv_transaction as c
-    join global_mart_db.staging.stg_orders_parquet as p
-    on c.product_sku = p.product_sku group by c.store_name,c.category;
+from global_mart_db.golden_mart.fact_sales f
+join global_mart_db.golden_mart.dim_store st on f.store_key = st.store_key
+join global_mart_db.golden_mart.dim_product p on f.product_key = p.product_key
+group by date(f.transaction_ts), st.store_id, st.store_city, st.store_name, p.category;
 
-select * from global_mart_db.golden_mart.gross_margin_fact;
 
-select * from global_mart_db.staging.stg_json_sensors;
-    
-    
-SELECT
-    CURRENT_ACCOUNT(),
-    CURRENT_REGION(),
-    CURRENT_ORGANIZATION_NAME(),
-    CURRENT_ACCOUNT_NAME(); 
+create or replace view global_mart_db.golden_mart.gross_margin_fact as
+select 
+    st.store_name,
+    p.category,
+    sum(f.line_total) as total_revenue_generated,
+    sum(o.unit_cost*f.quantity) as total_cost_generated,
+    sum(f.line_total) - sum(o.unit_cost*f.quantity) as gross_profit,
+    DIV0NULL((sum(f.line_total) - sum(o.unit_cost*f.quantity)), sum(f.line_total))*100 as gross_margin_precentage,
+    sum(f.quantity) as no_of_units_sold,
+    count(distinct f.transaction_id) as total_unit_orders,
+    current_date() as date_updated
+from global_mart_db.golden_mart.fact_sales as f
+join global_mart_db.golden_mart.dim_store st on f.store_key = st.store_key
+join global_mart_db.golden_mart.dim_product p on f.product_key = p.product_key
+join global_mart_db.golden_mart.fact_orders as o on o.product_key = f.product_key
+group by st.store_name, p.category;
+
+
+create or replace view global_mart_db.golden_mart.json_iot_pivot_table as
+select 
+ st.store_id, st.store_name,
+ avg( case when r.sensor_name='footfall' then r.sensor_value end) as average_football, 
+ avg( case when r.sensor_name='weight_kg' then r.sensor_value end) as average_weight,
+ avg( case when r.sensor_name='temp_c' then r.sensor_value end) as avg_temp 
+from global_mart_db.golden_mart.fact_iot_reading r
+join global_mart_db.golden_mart.dim_store st on r.store_key = st.store_key
+group by st.store_id, st.store_name;
+
+
+create or replace view global_mart_db.golden_mart.fact_iot_sensor as 
+select c.*, j.average_football, j.average_weight, j.avg_temp
+from global_mart_db.golden_mart.daily_sales_fact as c
+join global_mart_db.golden_mart.json_iot_pivot_table as j
+on c.store_id=j.store_id and c.store_name=j.store_name;
